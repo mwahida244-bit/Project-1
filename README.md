@@ -1,1 +1,381 @@
-# Project-1
+// MedicalRecordsApp.java
+import javafx.application.Application;
+import javafx.beans.property.*;
+import javafx.collections.*;
+import javafx.collections.transformation.FilteredList;
+import javafx.geometry.*;
+import javafx.scene.Scene;
+import javafx.scene.control.*;
+import javafx.scene.control.cell.*;
+import javafx.scene.layout.*;
+import javafx.stage.*;
+import java.io.*;
+import java.nio.file.*;
+import java.util.*;
+import java.util.stream.*;
+import java.io.*;
+import java.nio.file.*;
+import java.util.*;
+import java.util.stream.*;
+
+public class MedicalRecordsApp extends Application {
+
+    private final ObservableList<PatientRecord> records = FXCollections.observableArrayList();
+    private TableView<PatientRecord> table;
+
+    private TextField idField, nameField, ageField, contactField, diagnosisField, searchField;
+
+    public static void main(String[] args) {
+        launch(args);
+    }
+
+    @Override
+    public void start(Stage primaryStage) {
+        primaryStage.setTitle("Medical Records Management System");
+
+        // Top: form to add/update
+        GridPane form = createForm();
+
+        // Center: table
+        table = createTable();
+        table.setItems(records);
+
+        // Bottom: controls
+        HBox controls = createControls(primaryStage);
+
+        VBox root = new VBox(10, form, table, controls);
+        root.setPadding(new Insets(12));
+        root.setPrefWidth(900);
+
+        // Populate with some sample data
+        seedSampleData();
+
+        primaryStage.setScene(new Scene(root));
+        primaryStage.show();
+    }
+
+    private GridPane createForm() {
+        GridPane grid = new GridPane();
+        grid.setHgap(8);
+        grid.setVgap(8);
+        grid.setPadding(new Insets(6));
+
+        idField = new TextField();
+        nameField = new TextField();
+        ageField = new TextField();
+        contactField = new TextField();
+        diagnosisField = new TextField();
+
+        idField.setPromptText("Patient ID (unique)");
+        nameField.setPromptText("Full name");
+        ageField.setPromptText("Age");
+        contactField.setPromptText("Contact No.");
+        diagnosisField.setPromptText("Diagnosis / Notes");
+
+        Button addBtn = new Button("Add");
+        addBtn.setOnAction(e -> addRecord());
+
+        Button clearBtn = new Button("Clear");
+        clearBtn.setOnAction(e -> clearForm());
+
+        HBox buttons = new HBox(8, addBtn, clearBtn);
+
+        grid.add(new Label("Patient ID:"), 0, 0);
+        grid.add(idField, 1, 0);
+        grid.add(new Label("Name:"), 2, 0);
+        grid.add(nameField, 3, 0);
+
+        grid.add(new Label("Age:"), 0, 1);
+        grid.add(ageField, 1, 1);
+        grid.add(new Label("Contact:"), 2, 1);
+        grid.add(contactField, 3, 1);
+
+        grid.add(new Label("Diagnosis:"), 0, 2);
+        grid.add(diagnosisField, 1, 2, 3, 1);
+
+        grid.add(buttons, 0, 3, 4, 1);
+
+        ColumnConstraints cc = new ColumnConstraints();
+        cc.setPercentWidth(25);
+        grid.getColumnConstraints().addAll(cc, cc, cc, cc);
+
+        return grid;
+    }
+
+    private TableView<PatientRecord> createTable() {
+        TableView<PatientRecord> tv = new TableView<>();
+        tv.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+        tv.setPrefHeight(360);
+
+        TableColumn<PatientRecord, String> idCol = new TableColumn<>("ID");
+        idCol.setCellValueFactory(new PropertyValueFactory<>("id"));
+
+        TableColumn<PatientRecord, String> nameCol = new TableColumn<>("Name");
+        nameCol.setCellValueFactory(new PropertyValueFactory<>("name"));
+
+        TableColumn<PatientRecord, Integer> ageCol = new TableColumn<>("Age");
+        ageCol.setCellValueFactory(new PropertyValueFactory<>("age"));
+
+        TableColumn<PatientRecord, String> contactCol = new TableColumn<>("Contact");
+        contactCol.setCellValueFactory(new PropertyValueFactory<>("contact"));
+
+        TableColumn<PatientRecord, String> diagCol = new TableColumn<>("Diagnosis");
+        diagCol.setCellValueFactory(new PropertyValueFactory<>("diagnosis"));
+
+        TableColumn<PatientRecord, Void> actionCol = new TableColumn<>("Actions");
+        actionCol.setMinWidth(150);
+        actionCol.setCellFactory(tc -> new TableCell<>() {
+            private final Button editBtn = new Button("Edit");
+            private final Button delBtn = new Button("Delete");
+            private final HBox box = new HBox(8, editBtn, delBtn);
+            {
+                box.setAlignment(Pos.CENTER);
+                editBtn.setOnAction(e -> {
+                    PatientRecord rec = getTableView().getItems().get(getIndex());
+                    loadRecordToForm(rec);
+                });
+                delBtn.setOnAction(e -> {
+                    PatientRecord rec = getTableView().getItems().get(getIndex());
+                    deleteRecord(rec);
+                });
+            }
+            @Override
+            protected void updateItem(Void item, boolean empty) {
+                super.updateItem(item, empty);
+                setGraphic(empty ? null : box);
+            }
+        });
+
+        tv.getColumns().addAll(idCol, nameCol, ageCol, contactCol, diagCol, actionCol);
+        return tv;
+    }
+
+    private HBox createControls(Stage primaryStage) {
+        searchField = new TextField();
+        searchField.setPromptText("Search by ID or name...");
+        searchField.textProperty().addListener((obs, oldV, newV) -> filterTable(newV));
+
+        Button updateBtn = new Button("Update Selected");
+        updateBtn.setOnAction(e -> updateSelected());
+
+        Button deleteSelectedBtn = new Button("Delete Selected");
+        deleteSelectedBtn.setOnAction(e -> {
+            PatientRecord sel = table.getSelectionModel().getSelectedItem();
+            if (sel != null) deleteRecord(sel);
+        });
+
+        Button importBtn = new Button("Import CSV");
+        importBtn.setOnAction(e -> importCSV(primaryStage));
+
+        Button exportBtn = new Button("Export CSV");
+        exportBtn.setOnAction(e -> exportCSV(primaryStage));
+
+        HBox box = new HBox(10, new Label("Search:"), searchField, updateBtn, deleteSelectedBtn, importBtn, exportBtn);
+        box.setPadding(new Insets(6));
+        box.setAlignment(Pos.CENTER_LEFT);
+        return box;
+    }
+
+    private void addRecord() {
+        String id = idField.getText().trim();
+        String name = nameField.getText().trim();
+        String ageText = ageField.getText().trim();
+        String contact = contactField.getText().trim();
+        String diagnosis = diagnosisField.getText().trim();
+
+        if (id.isEmpty() || name.isEmpty()) {
+            showAlert(Alert.AlertType.WARNING, "Validation", "ID and Name are required.");
+            return;
+        }
+        if (records.stream().anyMatch(r -> r.getId().equals(id))) {
+            showAlert(Alert.AlertType.WARNING, "Validation", "Patient ID already exists.");
+            return;
+        }
+
+        int age = parseIntOrZero(ageText);
+        PatientRecord r = new PatientRecord(id, name, age, contact, diagnosis);
+        records.add(r);
+        clearForm();
+    }
+
+    private void clearForm() {
+        idField.clear();
+        nameField.clear();
+        ageField.clear();
+        contactField.clear();
+        diagnosisField.clear();
+    }
+
+    private void loadRecordToForm(PatientRecord r) {
+        idField.setText(r.getId());
+        idField.setDisable(true); // ID is unique; lock while editing
+        nameField.setText(r.getName());
+        ageField.setText(String.valueOf(r.getAge()));
+        contactField.setText(r.getContact());
+        diagnosisField.setText(r.getDiagnosis());
+    }
+
+    private void updateSelected() {
+        String id = idField.getText().trim();
+        if (id.isEmpty()) {
+            showAlert(Alert.AlertType.INFORMATION, "No Selection", "Load a record into form first by clicking Edit.");
+            return;
+        }
+        Optional<PatientRecord> opt = records.stream().filter(r -> r.getId().equals(id)).findFirst();
+        if (opt.isEmpty()) {
+            showAlert(Alert.AlertType.ERROR, "Update Error", "Selected record not found.");
+            idField.setDisable(false);
+            return;
+        }
+        PatientRecord rec = opt.get();
+        rec.setName(nameField.getText().trim());
+        rec.setAge(parseIntOrZero(ageField.getText().trim()));
+        rec.setContact(contactField.getText().trim());
+        rec.setDiagnosis(diagnosisField.getText().trim());
+
+        table.refresh();
+        idField.setDisable(false);
+        clearForm();
+    }
+
+    private void deleteRecord(PatientRecord rec) {
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION, "Delete record for " + rec.getName() + "?", ButtonType.YES, ButtonType.NO);
+        confirm.setHeaderText("Confirm delete");
+        Optional<ButtonType> res = confirm.showAndWait();
+        if (res.isPresent() && res.get() == ButtonType.YES) {
+            records.remove(rec);
+        }
+    }
+
+    private void filterTable(String q) {
+        if (q == null || q.isEmpty()) {
+            table.setItems(records);
+            return;
+        }
+        String s = q.toLowerCase();
+        FilteredList<PatientRecord> filtered = new FilteredList<>(records, r ->
+                r.getId().toLowerCase().contains(s) || r.getName().toLowerCase().contains(s));
+        table.setItems(filtered);
+    }
+
+    private void importCSV(Stage stage) {
+        FileChooser fc = new FileChooser();
+        fc.setTitle("Import records CSV");
+        fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("CSV Files", "*.csv"));
+        File f = fc.showOpenDialog(stage);
+        if (f == null) return;
+
+        try (BufferedReader br = Files.newBufferedReader(f.toPath())) {
+            List<PatientRecord> imported = br.lines()
+                    .map(this::parseCSVLine)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toList());
+            // merge by skipping duplicates
+            for (PatientRecord r : imported) {
+                if (records.stream().noneMatch(ex -> ex.getId().equals(r.getId()))) {
+                    records.add(r);
+                }
+            }
+            showAlert(Alert.AlertType.INFORMATION, "Import", "Imported " + imported.size() + " records (duplicates skipped).");
+        } catch (IOException ex) {
+            showAlert(Alert.AlertType.ERROR, "Import Error", ex.getMessage());
+        }
+    }
+
+    private void exportCSV(Stage stage) {
+        FileChooser fc = new FileChooser();
+        fc.setTitle("Export records CSV");
+        fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("CSV Files", "*.csv"));
+        fc.setInitialFileName("medical_records.csv");
+        File f = fc.showSaveDialog(stage);
+        if (f == null) return;
+
+        try (BufferedWriter bw = Files.newBufferedWriter(f.toPath())) {
+            for (PatientRecord r : records) {
+                bw.write(csvEscape(r.getId()) + "," +
+                         csvEscape(r.getName()) + "," +
+                         r.getAge() + "," +
+                         csvEscape(r.getContact()) + "," +
+                         csvEscape(r.getDiagnosis()));
+                bw.newLine();
+            }
+            showAlert(Alert.AlertType.INFORMATION, "Export", "Exported " + records.size() + " records to: " + f.getAbsolutePath());
+        } catch (IOException ex) {
+            showAlert(Alert.AlertType.ERROR, "Export Error", ex.getMessage());
+        }
+    }
+
+    private PatientRecord parseCSVLine(String line) {
+        if (line == null || line.isBlank()) return null;
+        // basic CSV parse (no quoted commas handling to keep code compact)
+        String[] parts = line.split(",", -1);
+        if (parts.length < 5) return null;
+        String id = unescape(parts[0]);
+        String name = unescape(parts[1]);
+        int age = parseIntOrZero(parts[2]);
+        String contact = unescape(parts[3]);
+        String diag = unescape(parts[4]);
+        return new PatientRecord(id, name, age, contact, diag);
+    }
+
+    private static String csvEscape(String s) {
+        if (s == null) return "";
+        return s.replace("\n", " ").replace(",", ";");
+    }
+
+    private static String unescape(String s) {
+        if (s == null) return "";
+        return s.replace(";", ",");
+    }
+
+    private int parseIntOrZero(String t) {
+        try { return Integer.parseInt(t.trim()); } catch (Exception e) { return 0; }
+    }
+
+    private void showAlert(Alert.AlertType t, String title, String msg) {
+        Alert a = new Alert(t, msg, ButtonType.OK);
+        a.setHeaderText(title);
+        a.showAndWait();
+    }
+
+    private void seedSampleData() {
+        
+    }
+
+    // Simple data model
+    public static class PatientRecord {
+        private final StringProperty id = new SimpleStringProperty();
+        private final StringProperty name = new SimpleStringProperty();
+        private final IntegerProperty age = new SimpleIntegerProperty();
+        private final StringProperty contact = new SimpleStringProperty();
+        private final StringProperty diagnosis = new SimpleStringProperty();
+
+        public PatientRecord(String id, String name, int age, String contact, String diagnosis) {
+            this.id.set(id);
+            this.name.set(name);
+            this.age.set(age);
+            this.contact.set(contact);
+            this.diagnosis.set(diagnosis);
+        }
+
+        public String getId() { return id.get(); }
+        public void setId(String v) { id.set(v); }
+        public StringProperty idProperty() { return id; }
+
+        public String getName() { return name.get(); }
+        public void setName(String v) { name.set(v); }
+        public StringProperty nameProperty() { return name; }
+
+        public int getAge() { return age.get(); }
+        public void setAge(int v) { age.set(v); }
+        public IntegerProperty ageProperty() { return age; }
+
+        public String getContact() { return contact.get(); }
+        public void setContact(String v) { contact.set(v); }
+        public StringProperty contactProperty() { return contact; }
+
+        public String getDiagnosis() { return diagnosis.get(); }
+        public void setDiagnosis(String v) { diagnosis.set(v); }
+        public StringProperty diagnosisProperty() { return diagnosis; }
+    }
+}
